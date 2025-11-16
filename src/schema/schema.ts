@@ -51,6 +51,64 @@ Table: vendor_vendorcategory (vvc)
 Table: admin_app_categorymodel (aacm)
 - id (integer)
 - name (text): Category name
+- deleted (boolean): False means not deleted
+
+Category Query Pattern:
+To fetch categories for a vendor, use this pattern:
+SELECT aacm.name, vvc.category_id_id 
+FROM vendor_vendorcategory vvc 
+LEFT JOIN admin_app_categorymodel aacm ON aacm.id = vvc.category_id_id 
+WHERE vvc.vendor_id_id = {vendor_id} 
+  AND vvc.active = true 
+  AND vvc.approved = '1' 
+  AND aacm.deleted = false
+ORDER BY vvc.priority ASC;
+
+Category Services Query Pattern:
+To fetch services for a specific category of a vendor, use this comprehensive pattern:
+SELECT
+  vvs.vendor_service_id_id AS service_id,
+  aasm.name AS service_name,
+  vvs.priority AS service_priority,
+  vvc.category_id_id AS category_id,
+  aacm.name AS category_name,
+  vvc.priority AS category_priority,
+  vvs.discount AS service_discount,
+  vvs.discount_type,
+  vvs.price AS service_price,
+  vvs.image,
+  vvs.id,
+  vvs.description,
+  aasm.veg
+FROM vendor_vendorcategory vvc
+LEFT JOIN admin_app_categorymodel aacm ON aacm.id = vvc.category_id_id
+INNER JOIN (
+  SELECT * FROM vendor_vendorservice
+  WHERE approved = '1'
+    AND vendor_id_id = {vendor_id}
+    AND active = true
+    AND price IS NOT NULL
+  ORDER BY priority ASC
+) AS vvs ON vvs.vendor_category_id_id = vvc.id
+LEFT JOIN admin_app_servicemodel AS aasm ON aasm.id = vvs.vendor_service_id_id
+WHERE vvc.vendor_id_id = {vendor_id}
+  AND vvc.category_id_id = {category_id}
+  AND vvc.approved = '1'
+  AND vvc.active = true
+  AND vvs.price IS NOT NULL
+  AND vvs.eye_toggle = true
+  AND vvs.price > 0
+GROUP BY aasm.veg, vvs.id, aasm.name, aacm.name, vvs.discount, vvs.discount_type,
+  vvs.price, vvs.image, vvs.description, vvc.category_id_id, vvs.id,
+  vvc.priority, vvs.priority, vvs.vendor_service_id_id
+ORDER BY category_priority ASC, vvs.priority ASC
+LIMIT 10 OFFSET {offset};
+
+IMPORTANT: When user asks to explore a category (e.g., "I want to explore burger"), you MUST:
+1. Use the vendor_id_id from previous conversation context (the vendor they were viewing)
+2. Use category_id_id from memory if available (more reliable than name matching)
+3. Filter by vvc.category_id_id = {category_id} AND vvc.vendor_id_id = {vendor_id}
+4. Join vendor_vendorservice (vvs) with vendor_vendorcategory (vvc) using vvs.vendor_category_id_id = vvc.id
 `;
 
 const serviceInfoSchema = `
@@ -142,6 +200,7 @@ Guidance for AI when generating SQL:
 - For nearby vendor search, use latitude/longitude range filters on vendor_vendormodel.
 - For menu/services, join vendor_vendorservice (vvs) with vendor_vendorcategory (vvc), admin_app_categorymodel (aacm), admin_app_servicemodel (aasm), addon tables, and offer tables as needed.
 - To fetch services/items for a particular vendor, filter vendor_vendorservice by vendor_id_id = {vendor_id} and join with admin_app_servicemodel (aasm) to get service names and veg flag.
+- To fetch categories for a vendor, use the Category Query Pattern shown above with vendor_id_id, active = true, approved = '1', and aacm.deleted = false.
 - Keep queries as simple as possible while still answering the user question.
 `;
 

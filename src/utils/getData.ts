@@ -34,19 +34,9 @@ const getData = async (query: string): Promise<DatabaseResult> => {
       if (rows.length === 0) {
         return { message: "No restaurants found. Try adjusting the search area or check if coordinates are correct." };
       }
-      
-      const data: any[] = rows.map((row: any) => {
-        const mappedRow: any = {};
-        if (row.store_name !== undefined) mappedRow.store_name = row.store_name;
-        if (row.city !== undefined) mappedRow.city = row.city;
-        if (row.vendor_rating !== undefined) mappedRow.vendor_rating = row.vendor_rating;
-        if (row.online !== undefined) mappedRow.online = row.online;
-        if (row.latitude !== undefined) mappedRow.latitude = row.latitude;
-        if (row.longitude !== undefined) mappedRow.longitude = row.longitude;
-        if (row.distance_km !== undefined) mappedRow.distance_km = row.distance_km;
-        if (row.distance_miles !== undefined) mappedRow.distance_miles = row.distance_miles;
-        return mappedRow;
-      });
+
+      // Return full rows so AI can see all selected columns (store, services, prices, etc.)
+      const data: any[] = rows.map((row: any) => ({ ...row }));
       
       if (data.length > 10) {
         return {

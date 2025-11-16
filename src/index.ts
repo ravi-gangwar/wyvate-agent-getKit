@@ -1,58 +1,52 @@
-import { googleAI } from "@genkit-ai/google-genai";
-import { z } from "genkit";
-import { ai } from "./ai.js";
-import getUserLocation from "./tools/findLocation.js";
-import databaseTool from "./tools/dbCall.js";
+import express from "express";
+import cors from "cors";
 import nearbyVendorsFlow from "./flows/nearbyVendors/index.js";
 
-// Re-export ai for convenience
-export { ai };
+const app = express();
 
-// Example: Category generation flow
-const input = z.object({
-    category: z.string().describe('is this is veg or non veg'),
-  });
-  
-const output = z.object({
-    category: z.enum(['veg', 'non-veg']),
-  });
+// CORS configuration
+app.use(cors({
+  origin: process.env.FRONTEND_URL || "*", // Allow all origins in development, set specific URL in production
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+}));
 
-const catGenenrateFlow = ai.defineFlow({
-    name: "catGenenrateFlow",
-    inputSchema: input,
-    outputSchema: output, 
-  }, async (input) => {
-        const prompt = `You are a helpful assistant that generates a category for a given input.
-        The input is ${input.category}.
-        Determine if this is veg or non-veg and return only the category.`
+app.use(express.json());
 
-        const response = await ai.generate({
-          model: googleAI.model('gemini-2.5-flash', {
-            temperature: 0.8,
-          }),
-          prompt: prompt,
-          output: {
-            schema: output,
-          },
-        });
+app.post("/chat", async (req, res) => {
+  try {
+    // Support both plain string body and JSON with { userQuery }
+    let userQuery: string | undefined;
 
-        if(!response.output) {
-            throw new Error("No result from AI");
-        }
+    if (typeof req.body === "string") {
+      userQuery = req.body;
+    } else if (req.body && typeof req.body.userQuery === "string") {
+      userQuery = req.body.userQuery;
+    }
 
-        return response.output;
-  });
+    if (!userQuery) {
+      return res
+        .status(400)
+        .json({ error: "Request body must be a string (user query) or an object with 'userQuery' field." });
+    }
 
-// Export flows and tools
-export { catGenenrateFlow, nearbyVendorsFlow, getUserLocation, databaseTool };
-
-async function main() {
-    // Example: Generalized vendor query flow
     const result = await nearbyVendorsFlow({
-      userQuery: "this is my location name is kanpur give me the nearby vendors",
+      userQuery,
     });
-  
-    console.log(JSON.stringify(result, null, 2));
+
+    return res.json(result);
+  } catch (error: any) {
+    console.error("Error in /chat:", error);
+    return res.status(500).json({
+      error:
+        error?.message || "An unexpected error occurred while processing request.",
+    });
   }
-  
-  main().catch(console.error);
+});
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});

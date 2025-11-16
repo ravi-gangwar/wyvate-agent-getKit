@@ -18,7 +18,8 @@ export interface FlowInput {
 }
 
 export interface FlowOutput {
-  response?: string;
+  ai_voice?: string;
+  markdown_text?: string;
   error?: string;
 }
 

@@ -15,7 +15,8 @@ const inputSchema = z.object({
 });
 
 const outputSchema = z.object({
-  response: z.string().optional(),
+  ai_voice: z.string().optional(),
+  markdown_text: z.string().optional(),
   error: z.string().optional(),
 });
 
@@ -30,6 +31,23 @@ const nearbyVendorsFlow = ai.defineFlow(
       // Step 1: Analyze user query
       const analysis = await analyzeUserQuery(input.userQuery);
 
+      // If user is asking for nearby vendors/services but no location info is available,
+      // ask explicitly for location instead of guessing a default.
+      const needsLocation = analysis.needsLocation === true;
+      // Only treat location as available if the user explicitly provided it
+      // via API input (coords or locationName). Do NOT infer from analysis here.
+      const hasLocationInput =
+        !!input.latitude || !!input.longitude || !!input.locationName;
+
+      if (needsLocation && !hasLocationInput) {
+        return {
+          ai_voice:
+            "To find nearby vendors and their services, please share your city name or current location.",
+          markdown_text:
+            "To find nearby vendors and their services, please share your **city name** or **current location**.",
+        };
+      }
+
       // Step 2: Get location coordinates if needed
       const location = await getLocationCoordinates(input, analysis);
 
@@ -40,9 +58,16 @@ const nearbyVendorsFlow = ai.defineFlow(
       const dbResult = await databaseTool({ query: sqlQuery });
 
       // Step 5: Refine and return response
-      const refinedResponse = await refineResponse(input.userQuery, dbResult, location);
+      const refinedResponse = await refineResponse(
+        input.userQuery,
+        dbResult,
+        location
+      );
 
-      return { response: refinedResponse };
+      return {
+        ai_voice: refinedResponse.ai_voice,
+        markdown_text: refinedResponse.markdown_text,
+      };
     } catch (error: any) {
       return {
         error: error.message || "An unexpected error occurred while processing your request.",

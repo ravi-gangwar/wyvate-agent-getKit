@@ -29,6 +29,7 @@ Requirements:
 - Use actual values, not placeholders
 - Include LIMIT 10 if not already present
 - For location queries, calculate distance if needed
+- If the user asks to explore services/items of a specific vendor, query services from vendor_vendorservice (vvs), joined with admin_app_servicemodel (aasm) to get service names and veg info, filtered by that vendor (by id or identifiable name), and return a list of services/items.
 - Return only the SQL query, nothing else`;
 
   const response = await retryWithBackoff(() =>

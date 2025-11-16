@@ -15,6 +15,7 @@ RUN npm run build
 # Expose port
 EXPOSE 3000
 
-# Start the application with env file
-CMD ["node", "--env-file=.env", "dist/index.js"]
+# Start the application
+# Use --env-file if .env exists, otherwise use environment variables from runtime
+CMD ["sh", "-c", "if [ -f .env ]; then node --env-file=.env dist/index.js; else node dist/index.js; fi"]
 

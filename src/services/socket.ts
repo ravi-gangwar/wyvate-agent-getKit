@@ -4,14 +4,10 @@
 
 import { Server as SocketIOServer } from "socket.io";
 import { Server as HTTPServer } from "http";
+import type { SocketLogEvent } from "../types/socket.js";
 
-export interface SocketLogEvent {
-  chatId: string; // Unique chat ID from frontend
-  step: string;
-  message: string;
-  timestamp: string;
-  metadata?: Record<string, any>;
-}
+// Re-export type for backward compatibility
+export type { SocketLogEvent };
 
 class SocketService {
   private io: SocketIOServer | null = null;

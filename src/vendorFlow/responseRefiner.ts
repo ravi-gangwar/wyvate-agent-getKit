@@ -1,10 +1,10 @@
 import { googleAI } from "@genkit-ai/google-genai";
-import { ai } from "../../ai.js";
-import { retryWithBackoff } from "../../utils/retryWithBackoff.js";
-import type { LocationData, QueryAnalysis } from "./types.js";
-import type { CartItem } from "../../services/memory.js";
+import { ai } from "../ai.js";
+import { retryWithBackoff } from "../utils/retryWithBackoff.js";
+import type { LocationData, QueryAnalysis } from "../types/vendorFlow.js";
+import type { CartItem } from "../services/memory.js";
 import { AI_MODEL, AI_TEMPERATURES } from "./constants.js";
-import { logger } from "../../utils/logger.js";
+import { logger } from "../utils/logger.js";
 
 /**
  * Filter out IDs and unwanted technical details from database results
@@ -80,8 +80,14 @@ export const refineResponse = async (
     filteredCount: userFacingData?.data?.length || 0,
   });
   
+  // Check if showing vendors (has store_name field, which vendors have)
+  const isShowingVendors = dbResult?.data && Array.isArray(dbResult.data) && 
+    dbResult.data.some((row: any) => {
+      return row.store_name !== undefined && row.store_name !== null;
+    });
+  
   // Check if showing services (has price field, which categories don't have)
-  const isShowingServices = dbResult?.data && Array.isArray(dbResult.data) && 
+  const isShowingServices = !isShowingVendors && dbResult?.data && Array.isArray(dbResult.data) && 
     dbResult.data.some((row: any) => {
       const hasServiceName = row.name || row.service_name;
       const hasPrice = row.price !== undefined && row.price !== null;
@@ -89,7 +95,7 @@ export const refineResponse = async (
     });
   
   // Check if showing categories (has name but no price, typically from category queries)
-  const isShowingCategories = dbResult?.data && Array.isArray(dbResult.data) && 
+  const isShowingCategories = !isShowingVendors && !isShowingServices && dbResult?.data && Array.isArray(dbResult.data) && 
     dbResult.data.some((row: any) => {
       const hasName = row.name;
       const hasNoPrice = row.price === undefined || row.price === null;
@@ -135,6 +141,78 @@ export const refineResponse = async (
   /**
    * Format cart in well-structured markdown
    */
+  /**
+   * Create a fallback response when AI refinement fails
+   */
+  const createFallbackResponse = (
+    userFacingData: any,
+    cart: CartItem[],
+    isShowingServices: boolean,
+    isPagination: boolean,
+    userQuery: string
+  ): { ai_voice: string; markdown_text: string } => {
+    let ai_voice = "";
+    let markdown_text = "";
+
+    // Generate basic response based on data
+    if (userFacingData?.data && userFacingData.data.length > 0) {
+      if (isShowingServices) {
+        const services = userFacingData.data.flatMap((category: any) => 
+          category.services || []
+        );
+        ai_voice = `I found ${services.length} service${services.length > 1 ? 's' : ''} available.`;
+        markdown_text = `## Available Services\n\n`;
+        services.forEach((service: any) => {
+          const name = service.name || service.service_name || "Unknown";
+          const price = service.price || service.service_price || 0;
+          const discount = service.discount || 0;
+          const finalPrice = price - discount;
+          markdown_text += `- **${name}** - ₹${finalPrice.toFixed(2)}`;
+          if (discount > 0) {
+            markdown_text += ` (Original: ₹${price.toFixed(2)}, Save: ₹${discount.toFixed(2)})`;
+          }
+          markdown_text += "\n";
+        });
+      } else {
+        // Showing vendors
+        const vendors = userFacingData.data;
+        ai_voice = `I found ${vendors.length} vendor${vendors.length > 1 ? 's' : ''} near you.`;
+        markdown_text = `## Nearby Vendors\n\n`;
+        vendors.forEach((vendor: any) => {
+          const name = vendor.store_name || vendor.name || "Unknown";
+          const distance = vendor.distance_km || vendor.distance;
+          const rating = vendor.vendor_rating || vendor.rating;
+          markdown_text += `- **${name}**`;
+          if (distance !== undefined && distance !== null) {
+            if (distance < 0.1) {
+              markdown_text += ` (at your location)`;
+            } else {
+              markdown_text += ` (approx. ${distance.toFixed(1)} km away)`;
+            }
+          }
+          if (rating !== undefined && rating !== null) {
+            markdown_text += ` - Rating: ${rating} stars`;
+          }
+          markdown_text += "\n";
+        });
+      }
+    } else {
+      ai_voice = "I couldn't find any results for your query. Please try again.";
+      markdown_text = "## No Results Found\n\nI couldn't find any results matching your query. Please try rephrasing or check your location.";
+    }
+
+    // Add cart if present
+    if (cart.length > 0) {
+      const cartMarkdown = formatCartMarkdown(cart);
+      markdown_text += "\n" + cartMarkdown;
+    }
+
+    return {
+      ai_voice: ai_voice || "Data retrieved, but unable to generate response.",
+      markdown_text: markdown_text || "Data retrieved, but unable to generate response.",
+    };
+  };
+
   const formatCartMarkdown = (cartItems: CartItem[]): string => {
     if (cartItems.length === 0) return "";
     
@@ -173,6 +251,7 @@ Your task:
 - Understand the user's request and the data.
 ${chatHistory ? "- Consider the previous conversation context to provide more relevant and contextual responses." : ""}
 - If no results found, keep the response SHORT and simple. Just inform the user briefly, don't provide long explanations or suggestions.
+${isShowingVendors ? "- CRITICAL: When showing VENDORS, format each vendor with ONLY: name, distance (if available as distance_km or distance_miles), and rating (if available as vendor_rating). Format distance as 'at your location' if distance_km is 0 or very small (< 0.1), otherwise as 'approx. X km away'. Do NOT include description, preparing time, offers, or any other details. Keep it simple and clean." : ""}
 ${isShowingCategories ? "- CRITICAL: When showing categories, ask the user: 'Which category would you like to explore?' or 'Which category would you like to see services from?' DO NOT ask about adding to cart - categories are not services!" : ""}
 ${isShowingServices ? "- When showing services, ask the user: 'Which service would you like to add to your cart?' or 'Would you like to add any of these services to your cart?'" : ""}
 ${isPagination ? "- If this is showing next page of results, mention 'Here are the next 10 services' or similar." : ""}
@@ -180,7 +259,7 @@ ${cartAdded ? "- Services were just added to cart. Confirm which ones were added
 ${cart.length > 0 ? "- The user has items in their cart. Include a brief mention in your response, but DO NOT format the cart details yourself - it will be added automatically." : ""}
 - Prepare TWO versions of the answer:
   1) ai_voice: A plain, friendly sentence or two suitable for text-to-speech.\n     - No markdown and no special formatting symbols.\n     - Use only normal letters, numbers, commas, periods, and basic punctuation.\n     - Keep it concise and easy to speak (max 2-3 sentences).\n     - If cart has items, mention "You have X items in your cart" briefly.
-  2) markdown_text: A rich markdown response.\n     - If results found: Use headings, bullet points, and bold text to present vendors and services/items.\n     - If showing categories: Ask which category they want to explore (e.g., "Which category would you like to explore?").\n     - If showing services: Ask which service they want to add to cart.\n     - If pagination: Mention "next 10 services" or similar.\n     - If no results: Keep it brief, just inform the user simply.\n     - Clearly list vendor names, services/items, prices, and any other important info.\n     - Make it visually nice for a chat UI.\n     - DO NOT include cart details in markdown_text - it will be appended automatically.
+  2) markdown_text: A rich markdown response.\n     ${isShowingVendors ? "- If showing VENDORS: List each vendor with ONLY name, distance (e.g., 'at your location' or 'approx. X km away'), and rating (if exists, e.g., 'Rating: X stars'). Format as simple bullet points. Example: '* Vendor Name (at your location) - Rating: 4 stars' or '* Vendor Name (approx. 5.4 km away)'. Do NOT include description, preparing time, offers, or other details. Group vendors by distance if helpful (e.g., 'Very Close' vs 'Other Vendors')." : ""}\n     - If showing categories: Ask which category they want to explore (e.g., "Which category would you like to explore?").\n     - If showing services: Ask which service they want to add to cart.\n     - If pagination: Mention "next 10 services" or similar.\n     - If no results: Keep it brief, just inform the user simply.\n     - Make it visually nice for a chat UI.\n     - DO NOT include cart details in markdown_text - it will be appended automatically.
 
 Respond ONLY in valid JSON with this exact shape:
 {
@@ -197,14 +276,27 @@ Respond ONLY in valid JSON with this exact shape:
     isPagination,
   });
 
-  const response = await retryWithBackoff(() =>
-    ai.generate({
-      model: googleAI.model(AI_MODEL, {
-        temperature: AI_TEMPERATURES.RESPONSE_REFINEMENT,
-      }),
-      prompt,
-    })
-  );
+  let response;
+  try {
+    response = await retryWithBackoff(() =>
+      ai.generate({
+        model: googleAI.model(AI_MODEL, {
+          temperature: AI_TEMPERATURES.RESPONSE_REFINEMENT,
+        }),
+        prompt,
+      })
+    );
+  } catch (error) {
+    const duration = Date.now() - refineStartTime;
+    logger.error("Response refinement failed after retries", {
+      query: userQuery,
+      duration,
+      error: error instanceof Error ? error.message : String(error),
+    }, error instanceof Error ? error : new Error(String(error)));
+    
+    // Return a fallback response
+    return createFallbackResponse(userFacingData, cart, isShowingServices, isPagination, userQuery);
+  }
 
   const duration = Date.now() - refineStartTime;
   const rawText = response.text?.trim() || "";

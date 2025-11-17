@@ -1,5 +1,5 @@
-import getUserLocation from "../../tools/findLocation.js";
-import type { FlowInput, QueryAnalysis, LocationData } from "./types.js";
+import getUserLocation from "../tools/findLocation.js";
+import type { FlowInput, QueryAnalysis, LocationData } from "../types/vendorFlow.js";
 import { LOCATION_RADIUS } from "./constants.js";
 
 export const getLocationCoordinates = async (

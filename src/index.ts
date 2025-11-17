@@ -1,66 +1,73 @@
 import express from "express";
-import cors from "cors";
 import { createServer } from "http";
-import nearbyVendorsFlow from "./flows/nearbyVendors/index.js";
 import { socketService } from "./services/socket.js";
+import { logger } from "./utils/logger.js";
+import { config, validateEnv } from "./config/env.js";
+import { corsMiddleware } from "./middleware/cors.js";
+import chatRoutes from "./routes/chat.js";
+import healthRoutes from "./routes/health.js";
 
+// Validate environment variables
+validateEnv();
+
+// Initialize Express app
 const app = express();
 const httpServer = createServer(app);
 
-// Initialize Socket.IO
+// Initialize Socket.IO for real-time logging
 socketService.initialize(httpServer);
 
-// CORS configuration
-app.use(cors({
-  origin: process.env.FRONTEND_URL || "*", // Allow all origins in development, set specific URL in production
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "x-user-id", "user-id"],
-  credentials: true
-}));
-
+// Middleware
+app.use(corsMiddleware);
 app.use(express.json());
 
-app.post("/chat", async (req, res) => {
-  try {
-    // Get chatId from request body (unique key from frontend)
-    const chatId = req.body?.chatId;
-    // Get userId from req.userId (set by middleware) or from body or default to "1"
-    const userId = (req as any).userId || req.body?.userId || "1";
-
-    // Extract userQuery from request body
-    const userQuery = req.body?.userQuery;
-
-    if (!userQuery || typeof userQuery !== "string") {
-      return res
-        .status(400)
-        .json({ error: "Request body must be an object with 'userQuery' field (string)." });
-    }
-
-    if (!chatId || typeof chatId !== "string") {
-      return res
-        .status(400)
-        .json({ error: "Request body must include 'chatId' field (string) - a unique identifier for this chat session." });
-    }
-
-    const result = await nearbyVendorsFlow({
-      userQuery,
-      userId: userId as string,
-      chatId: chatId as string,
-    });
-
-    return res.json(result);
-  } catch (error: any) {
-    console.error("Error in /chat:", error);
-    return res.status(500).json({
-      error:
-        error?.message || "An unexpected error occurred while processing request.",
+// Request logging middleware
+app.use((req, res, next) => {
+  if (req.path !== "/health") {
+    logger.info("Incoming request", {
+      method: req.method,
+      path: req.path,
+      ip: req.ip,
     });
   }
+  next();
 });
 
-const PORT = process.env.PORT || 3000;
+// Routes
+app.use("/", healthRoutes);
+app.use("/", chatRoutes);
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    error: "Not found",
+    message: `Route ${req.method} ${req.path} not found`,
+  });
+});
+
+// Error handling middleware
+app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  logger.error("Unhandled error", {
+    path: req.path,
+    method: req.method,
+  }, err);
+
+  res.status(500).json({
+    error: "Internal server error",
+    message: config.nodeEnv === "development" ? err.message : "An unexpected error occurred",
+  });
+});
+
+// Start server
+const PORT = config.port;
 
 httpServer.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
-  console.log(`Socket.IO server initialized`);
+  logger.info("Server started", {
+    port: PORT,
+    environment: config.nodeEnv,
+    frontendUrl: config.frontendUrl,
+  });
+  console.log(`🚀 Server listening on port ${PORT}`);
+  console.log(`📡 Socket.IO server initialized`);
+  console.log(`🌍 Environment: ${config.nodeEnv}`);
 });

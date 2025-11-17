@@ -1,12 +1,12 @@
 import { googleAI } from "@genkit-ai/google-genai";
-import { ai } from "../../ai.js";
-import { retryWithBackoff } from "../../utils/retryWithBackoff.js";
-import dbSchema from "../../schema/schema.js";
-import type { LocationData } from "./types.js";
+import { ai } from "../ai.js";
+import { retryWithBackoff } from "../utils/retryWithBackoff.js";
+import dbSchema from "../schema/schema.js";
+import type { LocationData } from "../types/vendorFlow.js";
 import { AI_MODEL, AI_TEMPERATURES } from "./constants.js";
 import { buildLocationContext } from "./locationHandler.js";
-import { getVendorId, getServiceId, getCategoryId, getStoreItemsByType } from "../../services/memory.js";
-import { logger } from "../../utils/logger.js";
+import { getVendorId, getServiceId, getCategoryId, getStoreItemsByType } from "../services/memory.js";
+import { logger } from "../utils/logger.js";
 
 export const cleanSqlQuery = (query: string): string => {
   return query
@@ -277,34 +277,68 @@ ${chatHistory ? "- Consider previous conversation context when understanding ref
   }
   logger.aiAction("SQL Generation", aiActionContext);
 
-  const response = await retryWithBackoff(() =>
-    ai.generate({
-      model: googleAI.model(AI_MODEL, {
-        temperature: AI_TEMPERATURES.SQL_GENERATION,
-      }),
-      prompt,
-    })
-  );
+  try {
+    const response = await retryWithBackoff(() =>
+      ai.generate({
+        model: googleAI.model(AI_MODEL, {
+          temperature: AI_TEMPERATURES.SQL_GENERATION,
+        }),
+        prompt,
+      })
+    );
 
-  const duration = Date.now() - sqlGenStartTime;
-  const sqlQuery = cleanSqlQuery(response.text?.trim() || "");
+    const duration = Date.now() - sqlGenStartTime;
+    const sqlQuery = cleanSqlQuery(response.text?.trim() || "");
 
-  logger.aiAction("SQL Generation Completed", {
-    query: userQuery,
-    duration,
-    sqlQuery: sqlQuery.length > 500 ? sqlQuery.substring(0, 500) + '... [truncated]' : sqlQuery,
-    response: response.text,
-  });
-
-  if (!sqlQuery) {
-    logger.error("Failed to generate SQL query", {
-      userId,
+    logger.aiAction("SQL Generation Completed", {
       query: userQuery,
+      duration,
+      sqlQuery: sqlQuery.length > 500 ? sqlQuery.substring(0, 500) + '... [truncated]' : sqlQuery,
       response: response.text,
     });
-    throw new Error("Failed to generate SQL query");
-  }
 
-  return sqlQuery;
+    if (!sqlQuery) {
+      logger.error("Failed to generate SQL query", {
+        userId,
+        query: userQuery,
+        response: response.text,
+      });
+      throw new Error("Failed to generate SQL query");
+    }
+
+    return sqlQuery;
+  } catch (error) {
+    const duration = Date.now() - sqlGenStartTime;
+    logger.error("SQL Generation failed after retries", {
+      userId,
+      query: userQuery,
+      duration,
+      error: error instanceof Error ? error.message : String(error),
+    }, error instanceof Error ? error : new Error(String(error)));
+    
+    // Return a fallback SQL query based on the user query
+    // This is a simple fallback - try to find vendors near the location
+    if (location) {
+      logger.warn("Using fallback SQL query", { userId, query: userQuery });
+      return `
+        SELECT 
+          vvm.id,
+          vvm.store_name,
+          vvm.vendor_rating,
+          earth_distance(
+            ll_to_earth(${location.latitude}, ${location.longitude}),
+            ll_to_earth(vvm.latitude, vvm.longitude)
+          ) / 1000.0 AS distance_km
+        FROM vendor_vendormodel vvm
+        LEFT JOIN vendor_vendorrules vvr ON vvr.id = vvm.rule_id_id
+        WHERE vvm.status = '6' 
+          AND vvr.listing = true
+        ORDER BY distance_km ASC
+        LIMIT 10
+      `;
+    }
+    
+    throw new Error("SQL_GENERATION_FAILED");
+  }
 };
 

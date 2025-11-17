@@ -442,6 +442,69 @@ export async function clearCart(userId: string): Promise<void> {
 }
 
 /**
+ * Update cart item quantity
+ */
+export async function updateCartItemQuantity(
+  userId: string,
+  serviceId: number,
+  vendorId: number,
+  quantity: number
+): Promise<boolean> {
+  const userMemory = userMemoryMap.get(userId);
+  if (!userMemory) return false;
+  
+  const itemIndex = userMemory.cart.findIndex(
+    (item) => item.serviceId === serviceId && item.vendorId === vendorId
+  );
+  
+  if (itemIndex >= 0 && userMemory.cart[itemIndex]) {
+    if (quantity <= 0) {
+      // Remove item if quantity is 0 or negative
+      userMemory.cart.splice(itemIndex, 1);
+    } else {
+      // Update quantity
+      const item = userMemory.cart[itemIndex];
+      if (item) {
+        item.quantity = quantity;
+      }
+    }
+    return true;
+  }
+  
+  return false;
+}
+
+/**
+ * Update cart item (full update)
+ */
+export async function updateCartItem(
+  userId: string,
+  serviceId: number,
+  vendorId: number,
+  updates: Partial<CartItem>
+): Promise<boolean> {
+  const userMemory = userMemoryMap.get(userId);
+  if (!userMemory) return false;
+  
+  const itemIndex = userMemory.cart.findIndex(
+    (item) => item.serviceId === serviceId && item.vendorId === vendorId
+  );
+  
+  if (itemIndex >= 0 && userMemory.cart[itemIndex]) {
+    const existingItem = userMemory.cart[itemIndex];
+    if (existingItem) {
+      userMemory.cart[itemIndex] = {
+        ...existingItem,
+        ...updates,
+      };
+    }
+    return true;
+  }
+  
+  return false;
+}
+
+/**
  * Update last service page for pagination
  */
 export function setLastServicePage(userId: string, page: number): void {

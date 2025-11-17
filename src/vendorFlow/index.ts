@@ -57,7 +57,7 @@ const nearbyVendorsFlow = ai.defineFlow(
 
       // Step 1: Analyze user query (includes spelling correction)
       logger.flowStep("Step 1: Analyzing user query and correcting spelling", { originalQuery: input.userQuery }, input.chatId);
-      const analysis = await analyzeUserQuery(input.userQuery, chatHistory);
+      const analysis = await analyzeUserQuery(input.userQuery, chatHistory, input.chatId);
       
       // Use corrected query if available, otherwise use original
       const userQuery = analysis.correctedQuery || input.userQuery;
@@ -112,7 +112,7 @@ const nearbyVendorsFlow = ai.defineFlow(
         userQuery: input.userQuery,
         duration,
         error: error instanceof Error ? error.message : String(error),
-      }, error instanceof Error ? error : new Error(String(error)));
+      }, error instanceof Error ? error : new Error(String(error)), input.chatId);
       
       // Return user-friendly error message without exposing technical details
       const errorMessage = getUserFriendlyErrorMessage(error);

@@ -70,7 +70,151 @@ class SocketService {
   }
 
   /**
-   * Emit log event to specific chat
+   * Sanitize metadata to remove sensitive data and circular references
+   */
+  private sanitizeMetadata(metadata?: Record<string, any>): Record<string, any> | undefined {
+    if (!metadata) return undefined;
+
+    const sanitized: Record<string, any> = {};
+    const seen = new WeakSet();
+
+    const sanitizeValue = (value: any, depth: number = 0): any => {
+      // Limit depth to prevent deep nesting
+      if (depth > 3) return '[Too Deep]';
+
+      // Handle null/undefined
+      if (value === null || value === undefined) return value;
+
+      // Handle primitives
+      if (typeof value !== 'object') {
+        // Truncate long strings
+        if (typeof value === 'string' && value.length > 200) {
+          return value.substring(0, 200) + '...';
+        }
+        return value;
+      }
+
+      // Handle arrays
+      if (Array.isArray(value)) {
+        return value.slice(0, 10).map((item, idx) => {
+          if (idx >= 10) return '[More items...]';
+          return sanitizeValue(item, depth + 1);
+        });
+      }
+
+      // Handle objects
+      if (value instanceof Error) {
+        return {
+          name: value.name,
+          message: value.message,
+        };
+      }
+
+      if (value instanceof Date) {
+        return value.toISOString();
+      }
+
+      // Check for circular references
+      if (seen.has(value)) {
+        return '[Circular]';
+      }
+      seen.add(value);
+
+      const result: Record<string, any> = {};
+      let keyCount = 0;
+      for (const [key, val] of Object.entries(value)) {
+        // Skip sensitive fields
+        if (['password', 'token', 'secret', 'apiKey', 'apikey', 'authorization'].some(s => key.toLowerCase().includes(s))) {
+          result[key] = '[Redacted]';
+          continue;
+        }
+
+        // Skip functions
+        if (typeof val === 'function') {
+          continue;
+        }
+
+        // Limit number of keys
+        if (keyCount >= 20) {
+          result['...'] = '[More fields...]';
+          break;
+        }
+
+        result[key] = sanitizeValue(val, depth + 1);
+        keyCount++;
+      }
+
+      return result;
+    };
+
+    for (const [key, value] of Object.entries(metadata)) {
+      // Skip sensitive keys
+      if (['password', 'token', 'secret', 'apiKey', 'apikey', 'authorization'].some(s => key.toLowerCase().includes(s))) {
+        sanitized[key] = '[Redacted]';
+        continue;
+      }
+
+      sanitized[key] = sanitizeValue(value);
+    }
+
+    return sanitized;
+  }
+
+  /**
+   * Abstract technical log messages to user-friendly messages
+   */
+  private abstractMessage(step: string, message: string, metadata?: Record<string, any>): string {
+    // If message is already user-friendly, use it
+    if (message && !message.includes('[') && !message.includes('Error:') && message.length < 100) {
+      return message;
+    }
+
+    // Abstract common technical messages
+    const abstractions: Record<string, string> = {
+      'Flow Started': 'Processing your request...',
+      'Retrieving chat history': 'Loading conversation history...',
+      'Correcting spelling': 'Checking spelling...',
+      'Analyzing user query': 'Understanding your request...',
+      'Handling cart': 'Processing cart...',
+      'Getting location': 'Finding your location...',
+      'Generating SQL': 'Preparing database query...',
+      'Executing SQL': 'Searching database...',
+      'Querying database': 'Searching database...',
+      'Extracting and saving': 'Processing results...',
+      'Refining response': 'Preparing your response...',
+      'Saving messages': 'Saving conversation...',
+      'Flow Completed': 'Request completed',
+      'SQL Query Execution': 'Searching database...',
+      'Query Analysis': 'Understanding your request...',
+      'Response Refinement': 'Preparing response...',
+    };
+
+    // Check for partial matches
+    for (const [key, abstracted] of Object.entries(abstractions)) {
+      if (step.includes(key) || message.includes(key)) {
+        return abstracted;
+      }
+    }
+
+    // Default abstraction
+    if (step.toLowerCase().includes('error') || message.toLowerCase().includes('error')) {
+      return 'An error occurred. Please try again.';
+    }
+
+    if (step.toLowerCase().includes('query') || step.toLowerCase().includes('database')) {
+      return 'Searching database...';
+    }
+
+    if (step.toLowerCase().includes('ai') || step.toLowerCase().includes('generating')) {
+      return 'Processing with AI...';
+    }
+
+    // Return simplified version of original message
+    return message.length > 100 ? message.substring(0, 100) + '...' : message;
+  }
+
+  /**
+   * Emit log event to specific chat with abstraction
    */
   emitLog(chatId: string, step: string, message: string, metadata?: Record<string, any>): void {
     if (!this.io) {
@@ -84,15 +228,21 @@ class SocketService {
       return;
     }
 
+    // Abstract the message for user-friendly display
+    const abstractedMessage = this.abstractMessage(step, message, metadata);
+
+    // Sanitize metadata
+    const sanitizedMetadata = this.sanitizeMetadata(metadata);
+
     const logEvent: SocketLogEvent = {
       chatId,
       step,
-      message,
+      message: abstractedMessage,
       timestamp: new Date().toISOString(),
     };
 
-    if (metadata) {
-      logEvent.metadata = metadata;
+    if (sanitizedMetadata && Object.keys(sanitizedMetadata).length > 0) {
+      logEvent.metadata = sanitizedMetadata;
     }
 
     // Emit to all sockets for this chat

@@ -86,21 +86,35 @@ export const refineResponse = async (
       return row.store_name !== undefined && row.store_name !== null;
     });
   
-  // Check if showing services (has price field, which categories don't have)
-  const isShowingServices = !isShowingVendors && dbResult?.data && Array.isArray(dbResult.data) && 
+  // Check if data has nested services structure (services grouped by category)
+  const hasNestedServices = dbResult?.data && Array.isArray(dbResult.data) && 
     dbResult.data.some((row: any) => {
-      const hasServiceName = row.name || row.service_name;
-      const hasPrice = row.price !== undefined && row.price !== null;
-      return hasServiceName && hasPrice;
+      return Array.isArray(row.services) && row.services.length > 0 && 
+             row.services.some((s: any) => s.price !== undefined && s.price !== null);
     });
   
+  // Check if showing services (has price field, which categories don't have)
+  // Also check for nested services structure (services grouped by category)
+  const isShowingServices = !isShowingVendors && (
+    hasNestedServices ||
+    (dbResult?.data && Array.isArray(dbResult.data) && 
+      dbResult.data.some((row: any) => {
+        const hasServiceName = row.name || row.service_name;
+        const hasPrice = row.price !== undefined && row.price !== null;
+        return hasServiceName && hasPrice;
+      }))
+  );
+  
   // Check if showing categories (has name but no price, typically from category queries)
-  const isShowingCategories = !isShowingVendors && !isShowingServices && dbResult?.data && Array.isArray(dbResult.data) && 
+  // Only if NOT showing services and NOT showing nested services
+  const isShowingCategories = !isShowingVendors && !isShowingServices && !hasNestedServices && 
+    dbResult?.data && Array.isArray(dbResult.data) && 
     dbResult.data.some((row: any) => {
-      const hasName = row.name;
+      const hasName = row.name || row.category_name;
       const hasNoPrice = row.price === undefined || row.price === null;
+      const hasNoServices = !Array.isArray(row.services) || row.services.length === 0;
       // Category queries typically return just name, no price/service details
-      return hasName && hasNoPrice && !row.service_name;
+      return hasName && hasNoPrice && hasNoServices && !row.service_name;
     });
   
   // Check if pagination request
@@ -253,7 +267,8 @@ ${chatHistory ? "- Consider the previous conversation context to provide more re
 - If no results found, keep the response SHORT and simple. Just inform the user briefly, don't provide long explanations or suggestions.
 ${isShowingVendors ? "- CRITICAL: When showing VENDORS, format each vendor with ONLY: name, distance (if available as distance_km or distance_miles), and rating (if available as vendor_rating). Format distance as 'at your location' if distance_km is 0 or very small (< 0.1), otherwise as 'approx. X km away'. Do NOT include description, preparing time, offers, or any other details. Keep it simple and clean." : ""}
 ${isShowingCategories ? "- CRITICAL: When showing categories, ask the user: 'Which category would you like to explore?' or 'Which category would you like to see services from?' DO NOT ask about adding to cart - categories are not services!" : ""}
-${isShowingServices ? "- When showing services, ask the user: 'Which service would you like to add to your cart?' or 'Would you like to add any of these services to your cart?'" : ""}
+${isShowingServices ? "- CRITICAL: When showing SERVICES (items/menu), list ALL services with their names, prices, and discounts (if any). Group them by category if they are grouped. Show the actual food items/services, NOT just category names. Format each service clearly with name and price. Example: '* Service Name - ₹100' or '* Service Name - ₹100 (Save ₹20)' if discount available. Then ask: 'Which service would you like to add to your cart?'" : ""}
+${hasNestedServices ? "- CRITICAL: The data has services grouped by category. Show ALL services from ALL categories. List each service with its name, price, and discount (if any). Format as: '## Category Name\n* Service 1 - ₹100\n* Service 2 - ₹150 (Save ₹20)\n\n## Another Category\n* Service 3 - ₹200\n...' Show ALL services, not just category names!" : ""}
 ${isPagination ? "- If this is showing next page of results, mention 'Here are the next 10 services' or similar." : ""}
 ${cartAdded ? "- Services were just added to cart. Confirm which ones were added successfully and mention any that couldn't be found." : ""}
 ${cart.length > 0 ? "- The user has items in their cart. Include a brief mention in your response, but DO NOT format the cart details yourself - it will be added automatically." : ""}

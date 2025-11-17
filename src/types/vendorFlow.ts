@@ -14,8 +14,11 @@ export interface QueryAnalysis {
   correctedQuery?: string; // Corrected query with spelling fixes (if any)
   isCartOperation?: boolean; // true if user wants to add/remove/view cart
   isPaginationRequest?: boolean; // true if user wants next page of results
-  cartAction?: "add" | "remove" | "view" | "clear"; // Type of cart operation
-  serviceNames?: string[]; // Array of service names to add to cart (can be multiple)
+  cartAction?: "add" | "remove" | "view" | "clear" | "update"; // Type of cart operation
+  serviceNames?: string[]; // Array of service names to add/update/remove from cart (can be multiple)
+  quantities?: number[]; // Array of quantities corresponding to serviceNames (optional, defaults to 1)
+  vendorName?: string | null; // Vendor name if user wants to explore a specific vendor
+  wantsServices?: boolean; // True if user wants to see services/items/menu (not just categories)
 }
 
 /**

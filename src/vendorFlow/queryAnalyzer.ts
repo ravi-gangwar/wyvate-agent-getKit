@@ -8,7 +8,8 @@ import { logger } from "../utils/logger.js";
 
 export const analyzeUserQuery = async (
   userQuery: string,
-  chatHistory: string = ""
+  chatHistory: string = "",
+  chatId?: string
 ): Promise<QueryAnalysis> => {
   const historyContext = chatHistory ? `\n\n${chatHistory}` : "";
   
@@ -21,9 +22,15 @@ export const analyzeUserQuery = async (
       2. Does the corrected query require a location? (yes/no)
       3. If yes, extract the location name (city, landmark, or address) ONLY if explicitly mentioned by the user. If the user did NOT mention a location, return null (NOT a default location).
       4. What type of data is the user asking for?
-      5. Is this a cart operation? (add to cart, remove from cart, view cart, clear cart)
-      6. Is this a pagination request? (show more, next page, show next 10, explore more services, more services, etc.) - If user says "explore more services" or "more services" after viewing services, this is pagination.
-      ${chatHistory ? "7. Consider the previous conversation context when analyzing the query. If location was mentioned in previous messages, you can use that. If user previously viewed services and now says 'more services' or 'explore more', this is pagination." : ""}
+      5. Is this a cart operation? (add to cart, remove from cart, view cart, clear cart, update cart/quantity)
+      6. If cart operation, extract:
+         - serviceNames: Array of service/item names mentioned (e.g., ["pizza", "burger"] for "add pizza and burger")
+         - quantities: Array of quantities mentioned (e.g., [2, 3] for "add 2 pizza and 3 burger"). If quantity not mentioned for a service, use null in the array (will default to 1 later). Match quantities to serviceNames by position.
+      7. If user wants to update quantity (e.g., "change pizza quantity to 5", "update burger to 3"), set cartAction to "update" and extract serviceNames and quantities.
+      8. Is this a pagination request? (show more, next page, show next 10, explore more services, more services, etc.) - If user says "explore more services" or "more services" after viewing services, this is pagination.
+      9. If the user wants to explore a specific vendor (e.g., "explore Namaste India", "show me services from Pizza Hut", "what does McDonald's offer"), extract the vendor name. Set vendorName to the vendor name if mentioned, otherwise null.
+      10. If the user wants to explore services/items/menu (e.g., "explore food items", "show me services", "show menu", "explore food menu", "show all services", "what items are available"), set wantsServices to true. This means they want to see actual services/items, not just categories.
+      ${chatHistory ? "11. Consider the previous conversation context when analyzing the query. If location was mentioned in previous messages, you can use that. If user previously viewed services and now says 'more services' or 'explore more', this is pagination. If a vendor was mentioned before, you can use that vendor name. If services were shown in previous messages, use those service names when user says 'add this' or 'add that'." : ""}
 
       IMPORTANT: 
       - Only set locationName if the user explicitly mentioned a location in their query or in previous conversation. Do NOT use any default location. If no location is mentioned, set locationName to null.
@@ -36,16 +43,28 @@ export const analyzeUserQuery = async (
     queryType: z.string().describe("Description of what the user wants"),
     isCartOperation: z.boolean().optional().describe("Whether this is a cart operation"),
     isPaginationRequest: z.boolean().optional().describe("Whether this is a pagination request"),
-    cartAction: z.enum(["add", "remove", "view", "clear"]).nullable().optional().describe("Type of cart operation"),
-    serviceNames: z.array(z.string()).nullable().optional().describe("Array of service names if adding multiple to cart"),
+    cartAction: z.enum(["add", "remove", "view", "clear", "update"]).nullable().optional().describe("Type of cart operation"),
+    serviceNames: z.array(z.string()).nullable().optional().describe("Array of service names if adding/updating/removing multiple items from cart"),
+    quantities: z.array(z.number()).nullable().optional().describe("Array of quantities corresponding to serviceNames (e.g., [2, 3] for 'add 2 pizza and 3 burger'). Extract numbers from query. If not specified, default to 1."),
+    vendorName: z.string().nullable().optional().describe("Vendor name if user wants to explore a specific vendor (e.g., 'Namaste India', 'Pizza Hut')"),
+    wantsServices: z.boolean().optional().describe("True if user wants to see services/items/menu (not just categories). Set to true for queries like 'explore food items', 'show services', 'show menu', 'explore food menu'."),
   });
 
   const startTime = Date.now();
-  logger.aiAction("Query Analysis", {
+  const aiActionDetails: {
+    query: string;
+    hasChatHistory: boolean;
+    chatHistoryLength: number;
+    chatId?: string;
+  } = {
     query: userQuery,
     hasChatHistory: !!chatHistory,
     chatHistoryLength: chatHistory.length,
-  });
+  };
+  if (chatId !== undefined) {
+    aiActionDetails.chatId = chatId;
+  }
+  logger.aiAction("Query Analysis", aiActionDetails);
 
   try {
     const response = await retryWithBackoff(() =>
@@ -83,19 +102,29 @@ export const analyzeUserQuery = async (
         analysis = queryAnalysisSchema.parse(parsed) as QueryAnalysis;
       }
       
-      logger.aiAction("Query Analysis Completed", {
+      const completedDetails: {
+        query: string;
+        duration: number;
+        analysis: QueryAnalysis;
+        response: string;
+        chatId?: string;
+      } = {
         query: userQuery,
         duration,
         analysis,
-        response: response.text,
-      });
+        response: response.text || "",
+      };
+      if (chatId !== undefined) {
+        completedDetails.chatId = chatId;
+      }
+      logger.aiAction("Query Analysis Completed", completedDetails);
       
       return analysis;
     } catch (parseError) {
       logger.error("Failed to parse query analysis response", {
         query: userQuery,
         response: response.text,
-      }, parseError instanceof Error ? parseError : new Error(String(parseError)));
+      }, parseError instanceof Error ? parseError : new Error(String(parseError)), chatId);
       
       return {
         needsLocation: false,
@@ -107,11 +136,11 @@ export const analyzeUserQuery = async (
     // Handle API errors (after all retries exhausted)
     const duration = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error("Query analysis API error", {
-      query: userQuery,
-      duration,
-      error: errorMessage,
-    }, error instanceof Error ? error : new Error(String(error)));
+      logger.error("Query analysis API error", {
+        query: userQuery,
+        duration,
+        error: errorMessage,
+      }, error instanceof Error ? error : new Error(String(error)), chatId);
     
     // Return default analysis to allow flow to continue
     // This prevents the flow from crashing and allows basic functionality

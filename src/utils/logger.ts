@@ -125,7 +125,7 @@ class Logger {
   /**
    * Log info message
    */
-  info(message: string, context?: Record<string, any>): void {
+  info(message: string, context?: Record<string, any>, chatId?: string): void {
     if (this.logLevel <= LogLevel.INFO) {
       const entry = this.formatLog(LogLevel.INFO, message, context);
       this.addLog(entry);
@@ -133,13 +133,18 @@ class Logger {
       const timestamp = this.formatTimestamp(entry.timestamp);
       const msg = chalk.white(message);
       console.log(`${levelTag} ${timestamp} - ${msg}${this.formatContext(context)}`);
+
+      // Emit to socket for important info messages
+      if (chatId && this.shouldEmitToSocket(message, context)) {
+        socketService.emitLog(chatId, "Info", message, context);
+      }
     }
   }
 
   /**
    * Log warning message
    */
-  warn(message: string, context?: Record<string, any>, error?: Error): void {
+  warn(message: string, context?: Record<string, any>, error?: Error, chatId?: string): void {
     if (this.logLevel <= LogLevel.WARN) {
       const entry = this.formatLog(LogLevel.WARN, message, context, error);
       this.addLog(entry);
@@ -147,13 +152,18 @@ class Logger {
       const timestamp = this.formatTimestamp(entry.timestamp);
       const msg = chalk.yellow(message);
       console.warn(`${levelTag} ${timestamp} - ${msg}${this.formatContext(context)}${this.formatError(error)}`);
+
+      // Emit to socket for warnings (user-friendly abstraction)
+      if (chatId) {
+        socketService.emitLog(chatId, "Warning", message, { ...context, error: error?.message });
+      }
     }
   }
 
   /**
    * Log error message
    */
-  error(message: string, context?: Record<string, any>, error?: Error): void {
+  error(message: string, context?: Record<string, any>, error?: Error, chatId?: string): void {
     if (this.logLevel <= LogLevel.ERROR) {
       const entry = this.formatLog(LogLevel.ERROR, message, context, error);
       this.addLog(entry);
@@ -161,7 +171,32 @@ class Logger {
       const timestamp = this.formatTimestamp(entry.timestamp);
       const msg = chalk.red.bold(message);
       console.error(`${levelTag} ${timestamp} - ${msg}${this.formatContext(context)}${this.formatError(error)}`);
+
+      // Emit to socket for errors (user-friendly abstraction)
+      if (chatId) {
+        socketService.emitLog(chatId, "Error", message, { ...context, error: error?.message });
+      }
     }
+  }
+
+  /**
+   * Check if a log message should be emitted to socket
+   */
+  private shouldEmitToSocket(message: string, context?: Record<string, any>): boolean {
+    // Emit important info messages
+    const importantKeywords = [
+      'completed',
+      'fetched',
+      'retrieved',
+      'saved',
+      'processing',
+      'found',
+      'success',
+    ];
+
+    return importantKeywords.some(keyword => 
+      message.toLowerCase().includes(keyword)
+    );
   }
 
   /**
@@ -174,6 +209,7 @@ class Logger {
     duration?: number;
     userId?: string;
     query?: string;
+    chatId?: string;
     [key: string]: any;
   }): void {
     const context: Record<string, any> = {
@@ -199,6 +235,24 @@ class Logger {
       const actionName = chalk.magenta.bold(action);
       const durationStr = details.duration ? chalk.cyan(` (${details.duration}ms)`) : '';
       console.log(`${levelTag} ${timestamp} - ${actionName}${durationStr}${this.formatContext(context)}`);
+    }
+
+    // Emit to socket for AI actions (with abstraction)
+    if (details.chatId) {
+      const abstractedAction = action.includes('Completed') 
+        ? `${action.replace(' Completed', '')} completed`
+        : action.includes('Query Analysis')
+        ? 'Understanding your request'
+        : action.includes('Response Refinement')
+        ? 'Preparing response'
+        : 'Processing with AI';
+      
+      socketService.emitLog(
+        details.chatId,
+        `AI: ${action}`,
+        abstractedAction,
+        { duration: details.duration }
+      );
     }
   }
 

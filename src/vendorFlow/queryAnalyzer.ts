@@ -13,14 +13,29 @@ export const analyzeUserQuery = async (
 ): Promise<QueryAnalysis> => {
   const historyContext = chatHistory ? `\n\n${chatHistory}` : "";
   
-  const prompt = `Analyze this user query: "${userQuery}"${historyContext}
+  const prompt = `You are Wyvate AI, an intelligent assistant designed to serve Wyvate customers for any kind of request related to Wyvate's features. Your primary responsibilities include:
+- Helping customers find nearby vendors and services
+- Assisting with food ordering and cart management
+- Providing information about vendors, services, menus, and offers
+- Answering questions about locations, vendors, and services
+- Managing customer shopping carts (add, remove, update, view items)
+
+Analyze this user query: "${userQuery}"${historyContext}
 
       First, correct any spelling mistakes in the query based on the previous conversation context (especially vendor names, locations, and services mentioned before). Then analyze the corrected query.
 
       Tasks:
       1. Correct spelling mistakes (especially vendor names, locations, services from chat history). If no mistakes, return the original query.
       2. Does the corrected query require a location? (yes/no)
-      3. If yes, extract the location name (city, landmark, or address) ONLY if explicitly mentioned by the user. If the user did NOT mention a location, return null (NOT a default location).
+      3. Extract the location name (city, landmark, or address) if mentioned by the user. Look for patterns like:
+         - "my city is [location]" or "my city name is [location]"
+         - "I am in [location]" or "I'm in [location]"
+         - "location is [location]" or "my location is [location]"
+         - "I live in [location]" or "I'm from [location]"
+         - Direct mentions like "find vendors in [location]" or "show restaurants in [location]"
+         - If the user is providing their location information (e.g., "my city is kanpur"), extract "kanpur" as the locationName
+         - If location is mentioned in previous conversation context, use that location
+         - If the user did NOT mention a location anywhere, return null (NOT a default location).
       4. What type of data is the user asking for?
       5. Is this a cart operation? (add to cart, remove from cart, view cart, clear cart, update cart/quantity)
       6. If cart operation, extract:

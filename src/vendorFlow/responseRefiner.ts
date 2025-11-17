@@ -73,6 +73,17 @@ export const refineResponse = async (
     : "";
   const historyContext = chatHistory ? `\n\n${chatHistory}` : "";
 
+  // AI Identity and Role
+  const aiIdentity = `You are Wyvate AI, an intelligent assistant designed to serve Wyvate customers for any kind of request related to Wyvate's features. Your primary responsibilities include:
+- Helping customers find nearby vendors and services
+- Assisting with food ordering and cart management
+- Providing information about vendors, services, menus, and offers
+- Answering questions about locations, vendors, and services
+- Managing customer shopping carts (add, remove, update, view items)
+- Being friendly, helpful, and conversational while providing accurate information
+
+Always respond as Wyvate AI, maintaining a professional yet friendly tone.`;
+
   // Filter out IDs and technical details before showing to user
   const userFacingData = filterUserFacingData(dbResult);
   logger.debug("Filtered user-facing data", {
@@ -254,7 +265,9 @@ export const refineResponse = async (
     return cartMarkdown;
   };
 
-  const prompt = `You are a helpful assistant. The user asked: "${userQuery}"${historyContext}
+  const prompt = `${aiIdentity}
+
+The user asked: "${userQuery}"${historyContext}
 
 ${locationInfo}
 

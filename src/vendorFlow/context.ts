@@ -12,7 +12,7 @@ export async function buildWorkflowContext(
   analysis: QueryAnalysis,
   location: LocationData | null
 ): Promise<WorkflowContext> {
-  const cart = input.userId ? await getCart(input.userId) : [];
+  const cart = input.chatId ? await getCart(input.chatId) : [];
 
   const context: WorkflowContext = {
     input,
@@ -23,10 +23,7 @@ export async function buildWorkflowContext(
     cart,
   };
 
-  // Only include userId and chatId if they are defined (for exactOptionalPropertyTypes)
-  if (input.userId !== undefined) {
-    context.userId = input.userId;
-  }
+  // Only include chatId if it is defined (for exactOptionalPropertyTypes)
   if (input.chatId !== undefined) {
     context.chatId = input.chatId;
   }

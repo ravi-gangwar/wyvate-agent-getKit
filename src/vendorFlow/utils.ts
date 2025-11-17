@@ -6,17 +6,17 @@ import type { CartItem, LastShownService } from "../services/memory.js";
  * Save user and assistant messages to memory
  */
 export async function saveMessages(
-  userId: string | undefined,
+  chatId: string | undefined,
   userQuery: string,
   assistantResponse: string
 ): Promise<void> {
-  if (!userId) return;
+  if (!chatId) return;
 
-  await saveMessage(userId, "user", userQuery).catch((err) => {
-    logger.error("Failed to save user message", { userId }, err);
+  await saveMessage(chatId, "user", userQuery).catch((err) => {
+    logger.error("Failed to save user message", { chatId }, err);
   });
-  await saveMessage(userId, "assistant", assistantResponse).catch((err) => {
-    logger.error("Failed to save assistant message", { userId }, err);
+  await saveMessage(chatId, "assistant", assistantResponse).catch((err) => {
+    logger.error("Failed to save assistant message", { chatId }, err);
   });
 }
 

@@ -35,8 +35,7 @@ export interface LocationData {
  */
 export interface FlowInput {
   userQuery: string;
-  userId?: string | undefined;
-  chatId?: string | undefined; // Unique chat/request ID from frontend for socket tracking
+  chatId?: string | undefined; // Unique chat/request ID from frontend for socket tracking and memory
   locationName?: string | undefined;
   latitude?: number | undefined;
   longitude?: number | undefined;
@@ -61,7 +60,6 @@ export interface WorkflowContext {
   analysis: QueryAnalysis;
   location: LocationData | null;
   cart: CartItem[];
-  userId?: string;
   chatId?: string;
 }
 

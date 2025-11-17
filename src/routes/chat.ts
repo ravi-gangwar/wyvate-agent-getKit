@@ -10,9 +10,8 @@ const router = Router();
  * POST /chat - Main chat endpoint for vendor queries
  * 
  * Request body:
- * - chatId: string (required) - Unique chat session identifier
+ * - chatId: string (required) - Unique chat session identifier (used for memory and socket tracking)
  * - userQuery: string (required) - User's query/question
- * - userId: string (optional) - User ID for chat history
  * - locationName: string (optional) - Location name if known
  * - latitude: number (optional) - Latitude if known
  * - longitude: number (optional) - Longitude if known
@@ -22,14 +21,10 @@ router.post("/chat", validateChatRequest, async (req: Request, res: Response) =>
   
   try {
     // Extract request body (already validated by middleware)
-    const { chatId, userQuery, userId, locationName, latitude, longitude } = req.body;
-
-    // Get userId from middleware, body, or default
-    const finalUserId = (req as any).userId || userId || "1";
+    const { chatId, userQuery, locationName, latitude, longitude } = req.body;
 
     logger.info("Chat request received", {
       chatId,
-      userId: finalUserId,
       queryLength: userQuery.length,
       hasLocation: !!(locationName || latitude || longitude),
     });
@@ -37,7 +32,6 @@ router.post("/chat", validateChatRequest, async (req: Request, res: Response) =>
     // Execute vendor flow
     const result = await nearbyVendorsFlow({
       userQuery,
-      userId: finalUserId,
       chatId,
       locationName,
       latitude,
@@ -47,7 +41,6 @@ router.post("/chat", validateChatRequest, async (req: Request, res: Response) =>
     const duration = Date.now() - startTime;
     logger.info("Chat request completed", {
       chatId,
-      userId: finalUserId,
       duration,
       hasError: !!result.error,
     });
@@ -59,7 +52,6 @@ router.post("/chat", validateChatRequest, async (req: Request, res: Response) =>
     
     logger.error("Chat request failed", {
       chatId: req.body?.chatId,
-      userId: req.body?.userId,
       duration,
       error: errorMessage,
     }, error instanceof Error ? error : new Error(String(error)));

@@ -23,14 +23,6 @@ export function validateChatRequest(req: Request, res: Response, next: NextFunct
   }
 
   // Validate optional fields if provided
-  if (req.body.userId && typeof req.body.userId !== "string") {
-    res.status(400).json({
-      error: "Validation error",
-      message: "'userId' must be a string if provided.",
-    });
-    return;
-  }
-
   if (req.body.latitude !== undefined && typeof req.body.latitude !== "number") {
     res.status(400).json({
       error: "Validation error",

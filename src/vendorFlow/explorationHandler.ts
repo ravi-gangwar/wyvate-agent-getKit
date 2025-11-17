@@ -15,7 +15,7 @@ export class ExplorationWorkflow implements WorkflowHandler {
   }
 
   async execute(context: WorkflowContext): Promise<FlowOutput> {
-    const { analysis, location, userQuery, userId, chatId } = context;
+    const { analysis, location, userQuery, chatId } = context;
 
     // Check if location is available (required for vendor exploration)
     if (!location) {
@@ -29,24 +29,24 @@ export class ExplorationWorkflow implements WorkflowHandler {
     const wantsServices = analysis.wantsServices === true;
     
     // Check if user wants to explore a specific vendor OR wants services
-    if ((analysis.vendorName || wantsServices) && userId) {
+    if ((analysis.vendorName || wantsServices) && chatId) {
       // Try to find vendor ID from store (memory)
       let vendorId: number | null = null;
       let actualVendorName: string | null = null;
       
       if (analysis.vendorName) {
-        vendorId = await getVendorId(userId, analysis.vendorName);
+        vendorId = await getVendorId(chatId, analysis.vendorName);
         actualVendorName = analysis.vendorName;
       } else if (wantsServices) {
         // User wants services but didn't specify vendor - use most recent vendor
-        const mostRecentVendor = getMostRecentVendor(userId);
+        const mostRecentVendor = getMostRecentVendor(chatId);
         if (mostRecentVendor) {
           vendorId = mostRecentVendor.id;
           actualVendorName = mostRecentVendor.name;
           logger.info("Using most recent vendor for services request", {
             vendorId,
             vendorName: actualVendorName,
-            userId,
+            chatId,
           }, chatId);
         }
       }
@@ -59,7 +59,7 @@ export class ExplorationWorkflow implements WorkflowHandler {
 
       // If found in store, get the actual vendor name from store
       if (vendorId) {
-        const storeVendors = getStoreItemsByType(userId, "vendor");
+        const storeVendors = getStoreItemsByType(chatId, "vendor");
         const foundStoreVendor = storeVendors.find(v => v.id === vendorId);
         if (foundStoreVendor) {
           actualVendorName = foundStoreVendor.name;
@@ -70,7 +70,7 @@ export class ExplorationWorkflow implements WorkflowHandler {
       if (!vendorId && analysis.vendorName) {
         logger.info("Vendor not found in store, fetching vendors", {
           vendorName: analysis.vendorName,
-          userId,
+          chatId,
         }, chatId);
 
         const vendorsResult = await fetchVendorsFromDB({
@@ -81,10 +81,10 @@ export class ExplorationWorkflow implements WorkflowHandler {
         });
 
         // Save vendors to memory first
-        if (userId && vendorsResult.Vendors) {
+        if (chatId && vendorsResult.Vendors) {
           for (const vendor of vendorsResult.Vendors) {
             if (vendor.id && vendor.store_name) {
-              await saveStoreItem(userId, {
+              await saveStoreItem(chatId, {
                 type: "vendor",
                 id: vendor.id,
                 name: vendor.store_name,
@@ -162,23 +162,25 @@ export class ExplorationWorkflow implements WorkflowHandler {
             });
 
             // Also save service to store
-            await saveStoreItem(userId, {
-              type: "service",
-              id: service.id,
-              name: service.name,
-              vendorId: vendorId,
-              lastMentioned: new Date(),
-            }).catch((err) => {
-              logger.error("Failed to save service to store", { serviceId: service.id }, err, chatId);
-            });
+            if (chatId) {
+              await saveStoreItem(chatId, {
+                type: "service",
+                id: service.id,
+                name: service.name,
+                vendorId: vendorId,
+                lastMentioned: new Date(),
+              }).catch((err) => {
+                logger.error("Failed to save service to store", { serviceId: service.id }, err, chatId);
+              });
+            }
           }
         }
 
         const servicesData = Array.from(servicesByCategory.values());
 
         // Save last shown services to memory
-        if (userId && lastShownServices.length > 0) {
-          saveLastShownServices(userId, lastShownServices);
+        if (chatId && lastShownServices.length > 0) {
+          saveLastShownServices(chatId, lastShownServices);
         }
 
         logger.info("Vendor services fetched", {
@@ -201,7 +203,7 @@ export class ExplorationWorkflow implements WorkflowHandler {
       } else {
         logger.warn("Vendor not found", {
           vendorName: analysis.vendorName,
-          userId,
+          chatId,
         }, undefined, chatId);
       }
     }
@@ -235,7 +237,7 @@ export class ExplorationWorkflow implements WorkflowHandler {
     };
 
     // Process results (extract IDs, save to memory)
-    if (userId && dbResult.data) {
+    if (chatId && dbResult.data) {
       await this.processResults(context, dbResult);
     }
 
@@ -250,9 +252,9 @@ export class ExplorationWorkflow implements WorkflowHandler {
     context: WorkflowContext,
     dbResult: any
   ): Promise<void> {
-    const { userId, chatId } = context;
+    const { chatId } = context;
 
-    if (!userId || !Array.isArray(dbResult.data)) {
+    if (!chatId || !Array.isArray(dbResult.data)) {
       return;
     }
 
@@ -263,7 +265,7 @@ export class ExplorationWorkflow implements WorkflowHandler {
     // Save vendors to memory store
     for (const vendor of dbResult.data) {
       if (vendor.id && vendor.store_name) {
-        await saveStoreItem(userId, {
+        await saveStoreItem(chatId, {
           type: "vendor",
           id: vendor.id,
           name: vendor.store_name,
@@ -276,7 +278,7 @@ export class ExplorationWorkflow implements WorkflowHandler {
 
     logger.info("Processed vendor results", {
       vendorCount: dbResult.data.length,
-      userId,
+      chatId,
     }, chatId);
   }
 

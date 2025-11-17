@@ -19,8 +19,7 @@ import { saveMessages } from "./utils.js";
 
 const inputSchema = z.object({
   userQuery: z.string().describe("User's query about vendors or any database query"),
-  userId: z.string().optional().describe("User ID for chat history"),
-  chatId: z.string().optional().describe("Unique chat/request ID from frontend for socket tracking"),
+  chatId: z.string().optional().describe("Unique chat/request ID from frontend for socket tracking and memory"),
   locationName: z.string().optional().describe("Location name if already known (e.g., 'Kanpur')"),
   latitude: z.number().optional().describe("Latitude if already known"),
   longitude: z.number().optional().describe("Longitude if already known"),
@@ -43,7 +42,7 @@ const nearbyVendorsFlow = ai.defineFlow(
   async (input: FlowInput): Promise<FlowOutput> => {
     const startTime = Date.now();
     logger.flowStep("Flow Started", {
-      userId: input.userId,
+      chatId: input.chatId,
       userQuery: input.userQuery,
       locationName: input.locationName,
       latitude: input.latitude,
@@ -52,8 +51,8 @@ const nearbyVendorsFlow = ai.defineFlow(
 
     try {
       // Step 0: Retrieve chat history and saved location
-      logger.flowStep("Step 0: Retrieving chat history and location", { userId: input.userId }, input.chatId);
-      const { chatHistory, savedLocation } = await loadUserContext(input.userId);
+      logger.flowStep("Step 0: Retrieving chat history and location", { chatId: input.chatId }, input.chatId);
+      const { chatHistory, savedLocation } = await loadUserContext(input.chatId);
 
       // Step 1: Analyze user query (includes spelling correction)
       logger.flowStep("Step 1: Analyzing user query and correcting spelling", { originalQuery: input.userQuery }, input.chatId);
@@ -72,7 +71,7 @@ const nearbyVendorsFlow = ai.defineFlow(
       const location = await handleLocation(input, analysis, savedLocation, userQuery, chatHistory);
       if (!location && analysis.needsLocation) {
         // Location was requested but not available
-        return createLocationRequestResponse(userQuery, input.userId);
+        return createLocationRequestResponse(userQuery, input.chatId);
       }
 
       // Step 4: Build workflow context and route to appropriate workflow
@@ -97,7 +96,7 @@ const nearbyVendorsFlow = ai.defineFlow(
         ? await handleWorkflowResult(workflowResult, input, userQuery, chatHistory, location, analysis)
         : workflowResult;
 
-      await saveMessages(input.userId, userQuery, finalResult.ai_voice || "");
+      await saveMessages(input.chatId, userQuery, finalResult.ai_voice || "");
 
       logger.flowStep("Flow Completed Successfully", {
         duration: Date.now() - startTime,
@@ -108,7 +107,7 @@ const nearbyVendorsFlow = ai.defineFlow(
     } catch (error) {
       const duration = Date.now() - startTime;
       logger.error("Flow execution failed", {
-        userId: input.userId,
+        chatId: input.chatId,
         userQuery: input.userQuery,
         duration,
         error: error instanceof Error ? error.message : String(error),
@@ -168,16 +167,16 @@ function getUserFriendlyErrorMessage(error: any): string {
 }
 
 // Helper methods
-async function loadUserContext(userId?: string): Promise<{ chatHistory: string; savedLocation: any }> {
+async function loadUserContext(chatId?: string): Promise<{ chatHistory: string; savedLocation: any }> {
   let chatHistory = "";
   let savedLocation = null;
 
-  if (userId) {
-    const previousMessages = await getChatHistory(userId);
+  if (chatId) {
+    const previousMessages = await getChatHistory(chatId);
     chatHistory = formatChatHistoryForPrompt(previousMessages);
-    savedLocation = await getUserLocation(userId);
+    savedLocation = await getUserLocation(chatId);
     logger.info("Retrieved chat history and location", {
-      userId,
+      chatId,
       messageCount: previousMessages.length,
       hasSavedLocation: savedLocation !== null,
     });
@@ -233,12 +232,12 @@ async function handleLocation(
     });
 
     // Save location to memory
-    if (location && input.userId) {
-      await saveUserLocation(input.userId, location).catch((err) => {
-        logger.error("Failed to save user location", { userId: input.userId, location }, err);
+    if (location && input.chatId) {
+      await saveUserLocation(input.chatId, location).catch((err) => {
+        logger.error("Failed to save user location", { chatId: input.chatId, location }, err);
       });
       logger.info("Location saved to memory", {
-        userId: input.userId,
+        chatId: input.chatId,
         locationName: location.name,
       });
     }
@@ -249,19 +248,19 @@ async function handleLocation(
   return location;
 }
 
-function createLocationRequestResponse(userQuery: string, userId?: string): FlowOutput {
+function createLocationRequestResponse(userQuery: string, chatId?: string): FlowOutput {
   const response = {
     ai_voice: "Please share your city name or current location to find nearby vendors.",
     markdown_text: "📍 Please share your **city name** or **current location** to find nearby vendors.",
   };
 
   // Save messages
-  if (userId) {
-    saveMessage(userId, "user", userQuery).catch((err) => {
-      logger.error("Failed to save user message", { userId }, err);
+  if (chatId) {
+    saveMessage(chatId, "user", userQuery).catch((err) => {
+      logger.error("Failed to save user message", { chatId }, err);
     });
-    saveMessage(userId, "assistant", response.ai_voice).catch((err) => {
-      logger.error("Failed to save assistant message", { userId }, err);
+    saveMessage(chatId, "assistant", response.ai_voice).catch((err) => {
+      logger.error("Failed to save assistant message", { chatId }, err);
     });
   }
 
@@ -315,7 +314,7 @@ async function refineWorkflowResult(
   try {
     const result = workflowResult as any;
     const dbResult = result.dbResult;
-    const cart = input.userId ? await getCart(input.userId) : [];
+    const cart = input.chatId ? await getCart(input.chatId) : [];
 
     logger.flowStep("Step 5: Refining response", undefined, input.chatId);
     const refinedResponse = await refineResponse(

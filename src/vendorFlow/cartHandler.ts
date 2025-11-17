@@ -20,11 +20,11 @@ import type { CartItem } from "../services/memory.js";
  */
 export class CartWorkflow implements WorkflowHandler {
   canHandle(context: WorkflowContext): boolean {
-    return context.analysis.isCartOperation === true && !!context.userId;
+    return context.analysis.isCartOperation === true && !!context.chatId;
   }
 
   async execute(context: WorkflowContext): Promise<FlowOutput> {
-    const { analysis, userQuery, chatHistory, userId, chatId } = context;
+    const { analysis, userQuery, chatHistory, chatId } = context;
 
     logger.flowStep("Cart Workflow: Handling cart operation", {
       cartAction: analysis.cartAction,
@@ -63,9 +63,9 @@ export class CartWorkflow implements WorkflowHandler {
   }
 
   private async handleViewCart(context: WorkflowContext): Promise<FlowOutput> {
-    const { userQuery, chatHistory, cart, userId } = context;
+    const { userQuery, chatHistory, cart, chatId } = context;
 
-    logger.info("Viewing cart", { itemCount: cart.length });
+    logger.info("Viewing cart", { itemCount: cart.length }, chatId);
 
     const cartResponse = await refineResponse(
       userQuery,
@@ -75,7 +75,9 @@ export class CartWorkflow implements WorkflowHandler {
       cart
     );
 
-    await saveMessages(userId, userQuery, cartResponse.ai_voice);
+    if (chatId) {
+      await saveMessages(chatId, userQuery, cartResponse.ai_voice);
+    }
 
     return {
       ai_voice: cartResponse.ai_voice,
@@ -84,34 +86,48 @@ export class CartWorkflow implements WorkflowHandler {
   }
 
   private async handleClearCart(context: WorkflowContext): Promise<FlowOutput> {
-    const { userQuery, userId } = context;
+    const { userQuery, chatId } = context;
 
-    logger.info("Clearing cart");
-    await clearCart(userId!);
+    if (!chatId) {
+      return {
+        ai_voice: "Unable to clear cart. Chat ID is required.",
+        markdown_text: "❌ Unable to clear cart. Chat ID is required.",
+      };
+    }
+
+    logger.info("Clearing cart", undefined, chatId);
+    await clearCart(chatId);
 
     const response = {
       ai_voice: "Your cart has been cleared.",
       markdown_text: "🛒 Your cart has been cleared.",
     };
 
-    await saveMessages(userId, userQuery, response.ai_voice);
+    await saveMessages(chatId, userQuery, response.ai_voice);
 
     return response;
   }
 
   private async handleAddToCart(context: WorkflowContext): Promise<FlowOutput> {
-    const { userQuery, chatHistory, analysis, userId } = context;
+    const { userQuery, chatHistory, analysis, chatId } = context;
+
+    if (!chatId) {
+      return {
+        ai_voice: "Unable to add to cart. Chat ID is required.",
+        markdown_text: "❌ Unable to add to cart. Chat ID is required.",
+      };
+    }
 
     // Check if user wants to add discounted service from previously shown services
     const wantsServiceWithDiscount = this.isDiscountRequest(userQuery);
     
-    if (wantsServiceWithDiscount && userId) {
-      const servicesWithDiscount = getLastShownServicesWithDiscount(userId);
+    if (wantsServiceWithDiscount) {
+      const servicesWithDiscount = getLastShownServicesWithDiscount(chatId);
       
       if (servicesWithDiscount.length > 0) {
         logger.info("Found services with discount from last shown services", {
           count: servicesWithDiscount.length,
-        }, context.chatId);
+        }, chatId);
 
         const serviceToAdd = servicesWithDiscount[0];
         if (!serviceToAdd) {
@@ -119,9 +135,9 @@ export class CartWorkflow implements WorkflowHandler {
         }
         const cartItem = createCartItemFromService(serviceToAdd);
         
-        await addToCart(userId, cartItem);
+        await addToCart(chatId, cartItem);
         
-        const updatedCart = await getCart(userId);
+        const updatedCart = await getCart(chatId);
         const cartResponse = await refineResponse(
           userQuery,
           { data: updatedCart, message: "Cart items" },
@@ -131,7 +147,7 @@ export class CartWorkflow implements WorkflowHandler {
           analysis
         );
 
-        await saveMessages(userId, userQuery, cartResponse.ai_voice);
+        await saveMessages(chatId, userQuery, cartResponse.ai_voice);
 
         return {
           ai_voice: cartResponse.ai_voice,
@@ -141,12 +157,12 @@ export class CartWorkflow implements WorkflowHandler {
     }
 
     // Check if user said "add this", "add that", "add it", etc. - extract from last shown services
-    if (this.isGenericAddRequest(userQuery) && userId) {
-      const lastShownServices = getLastShownServices(userId);
+    if (this.isGenericAddRequest(userQuery)) {
+      const lastShownServices = getLastShownServices(chatId);
       if (lastShownServices.length > 0) {
         logger.info("Generic add request detected, using last shown services", {
           serviceCount: lastShownServices.length,
-        }, context.chatId);
+        }, chatId);
         
         // Use last shown service(s) - if multiple, use the first one or all based on context
         const servicesToAdd = lastShownServices.slice(0, 1); // For now, add first one
@@ -157,11 +173,11 @@ export class CartWorkflow implements WorkflowHandler {
           if (service) {
             const cartItem = createCartItemFromService(service);
             cartItem.quantity = quantities[i] || 1;
-            await addToCart(userId, cartItem);
+            await addToCart(chatId, cartItem);
           }
         }
         
-        const updatedCart = await getCart(userId);
+        const updatedCart = await getCart(chatId);
         const cartResponse = await refineResponse(
           userQuery,
           { 
@@ -178,7 +194,7 @@ export class CartWorkflow implements WorkflowHandler {
           analysis
         );
 
-        await saveMessages(userId, userQuery, cartResponse.ai_voice);
+        await saveMessages(chatId, userQuery, cartResponse.ai_voice);
 
         return {
           ai_voice: cartResponse.ai_voice,
@@ -216,9 +232,9 @@ export class CartWorkflow implements WorkflowHandler {
   }
 
   private async handleAddServicesByName(context: WorkflowContext): Promise<FlowOutput> {
-    const { userQuery, chatHistory, analysis, userId } = context;
+    const { userQuery, chatHistory, analysis, chatId } = context;
     
-    if (!userId || !analysis.serviceNames || analysis.serviceNames.length === 0) {
+    if (!chatId || !analysis.serviceNames || analysis.serviceNames.length === 0) {
       return {
         ai_voice: "I couldn't find the services you want to add. Please specify which services you'd like to add to your cart.",
         markdown_text: "❓ I couldn't find the services you want to add. Please specify which services you'd like to add to your cart.",
@@ -228,19 +244,19 @@ export class CartWorkflow implements WorkflowHandler {
     logger.info("Adding services to cart from memory", {
       serviceNames: analysis.serviceNames,
       quantities: analysis.quantities,
-      userId,
-    }, context.chatId);
+      chatId,
+    }, chatId);
 
     const servicesToAdd: CartItem[] = [];
     const notFoundServices: string[] = [];
     const quantities = analysis.quantities || [];
 
     // First, try to find in last shown services (has full details)
-    const lastShownServices = getLastShownServices(userId);
+    const lastShownServices = getLastShownServices(chatId);
     
     // Then, try to find in store (has basic info)
-    const storeServices = getStoreItemsByType(userId, "service");
-    const storeVendors = getStoreItemsByType(userId, "vendor");
+    const storeServices = getStoreItemsByType(chatId, "service");
+    const storeVendors = getStoreItemsByType(chatId, "vendor");
 
     for (let i = 0; i < analysis.serviceNames.length; i++) {
       const requestedServiceName = analysis.serviceNames[i];
@@ -311,13 +327,13 @@ export class CartWorkflow implements WorkflowHandler {
 
     // Add all found services to cart
     for (const cartItem of servicesToAdd) {
-      await addToCart(userId, cartItem).catch((err) => {
-        logger.error("Failed to add item to cart", { cartItem }, err);
+      await addToCart(chatId, cartItem).catch((err) => {
+        logger.error("Failed to add item to cart", { cartItem }, err, chatId);
       });
     }
 
     // Get updated cart
-    const updatedCart = await getCart(userId);
+    const updatedCart = await getCart(chatId);
     
     // Prepare response
     let responseMessage = "";
@@ -347,7 +363,7 @@ export class CartWorkflow implements WorkflowHandler {
       analysis
     );
 
-    await saveMessages(userId, userQuery, cartResponse.ai_voice);
+    await saveMessages(chatId, userQuery, cartResponse.ai_voice);
 
     return {
       ai_voice: cartResponse.ai_voice,
@@ -356,9 +372,9 @@ export class CartWorkflow implements WorkflowHandler {
   }
 
   private async handleRemoveFromCart(context: WorkflowContext): Promise<FlowOutput> {
-    const { userQuery, chatHistory, analysis, userId, cart } = context;
+    const { userQuery, chatHistory, analysis, chatId, cart } = context;
 
-    if (!userId || !analysis.serviceNames || analysis.serviceNames.length === 0) {
+    if (!chatId || !analysis.serviceNames || analysis.serviceNames.length === 0) {
       return {
         ai_voice: "Please specify which items you'd like to remove from your cart.",
         markdown_text: "❓ Please specify which items you'd like to remove from your cart.",
@@ -367,8 +383,8 @@ export class CartWorkflow implements WorkflowHandler {
 
     logger.info("Removing services from cart", {
       serviceNames: analysis.serviceNames,
-      userId,
-    });
+      chatId,
+    }, chatId);
 
     const removedServices: string[] = [];
     const notFoundServices: string[] = [];
@@ -382,20 +398,20 @@ export class CartWorkflow implements WorkflowHandler {
       );
 
       if (cartItem) {
-        await removeFromCart(userId, cartItem.serviceId, cartItem.vendorId);
+        await removeFromCart(chatId, cartItem.serviceId, cartItem.vendorId);
         removedServices.push(cartItem.serviceName);
         logger.info("Removed service from cart", {
           serviceName: cartItem.serviceName,
           serviceId: cartItem.serviceId,
-        });
+        }, chatId);
       } else {
         notFoundServices.push(requestedServiceName);
-        logger.warn("Service not found in cart", { requestedServiceName });
+        logger.warn("Service not found in cart", { requestedServiceName }, undefined, chatId);
       }
     }
 
     // Get updated cart
-    const updatedCart = await getCart(userId);
+    const updatedCart = await getCart(chatId);
 
     let responseMessage = "";
     if (removedServices.length > 0) {
@@ -417,7 +433,7 @@ export class CartWorkflow implements WorkflowHandler {
       analysis
     );
 
-    await saveMessages(userId, userQuery, cartResponse.ai_voice);
+    await saveMessages(chatId, userQuery, cartResponse.ai_voice);
 
     return {
       ai_voice: cartResponse.ai_voice || responseMessage,
@@ -426,9 +442,9 @@ export class CartWorkflow implements WorkflowHandler {
   }
 
   private async handleUpdateCart(context: WorkflowContext): Promise<FlowOutput> {
-    const { userQuery, chatHistory, analysis, userId, cart } = context;
+    const { userQuery, chatHistory, analysis, chatId, cart } = context;
 
-    if (!userId || !analysis.serviceNames || analysis.serviceNames.length === 0) {
+    if (!chatId || !analysis.serviceNames || analysis.serviceNames.length === 0) {
       return {
         ai_voice: "Please specify which items you'd like to update in your cart.",
         markdown_text: "❓ Please specify which items you'd like to update in your cart.",
@@ -438,8 +454,8 @@ export class CartWorkflow implements WorkflowHandler {
     logger.info("Updating cart items", {
       serviceNames: analysis.serviceNames,
       quantities: analysis.quantities,
-      userId,
-    }, context.chatId);
+      chatId,
+    }, chatId);
 
     const updatedServices: string[] = [];
     const notFoundServices: string[] = [];
@@ -465,11 +481,11 @@ export class CartWorkflow implements WorkflowHandler {
 
         if (quantity <= 0) {
           // Remove if quantity is 0 or negative
-          await removeFromCart(userId, cartItem.serviceId, cartItem.vendorId);
+          await removeFromCart(chatId, cartItem.serviceId, cartItem.vendorId);
           updatedServices.push(`${cartItem.serviceName} (removed)`);
         } else {
           // Update quantity
-          await updateCartItemQuantity(userId, cartItem.serviceId, cartItem.vendorId, quantity);
+          await updateCartItemQuantity(chatId, cartItem.serviceId, cartItem.vendorId, quantity);
           updatedServices.push(`${cartItem.serviceName} (quantity: ${quantity})`);
         }
         
@@ -485,7 +501,7 @@ export class CartWorkflow implements WorkflowHandler {
     }
 
     // Get updated cart
-    const updatedCart = await getCart(userId);
+    const updatedCart = await getCart(chatId);
 
     let responseMessage = "";
     if (updatedServices.length > 0) {
@@ -506,7 +522,7 @@ export class CartWorkflow implements WorkflowHandler {
       analysis
     );
 
-    await saveMessages(userId, userQuery, cartResponse.ai_voice);
+    await saveMessages(chatId, userQuery, cartResponse.ai_voice);
 
     return {
       ai_voice: cartResponse.ai_voice || responseMessage,
